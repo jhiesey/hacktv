@@ -1,7 +1,7 @@
 
 CC      := $(CROSS_HOST)gcc
 PKGCONF := $(CROSS_HOST)pkg-config
-CFLAGS  := -g -Wall -pthread -O3 $(EXTRA_CFLAGS)
+CFLAGS  := -g -Wall -pthread -O3 $(EXTRA_CFLAGS) -mavx512bw
 LDFLAGS := -g -lm -pthread $(EXTRA_LDFLAGS)
 OBJS    := hacktv.o common.o fir.o vbidata.o teletext.o wss.o video.o mac.o dance.o eurocrypt.o videocrypt.o videocrypts.o syster.o acp.o vits.o nicam728.o test.o ffmpeg.o file.o hackrf.o channels.o
 PKGS    := libavcodec libavformat libavdevice libswscale libswresample libavutil libhackrf $(EXTRA_PKGS)

@@ -15,16 +15,38 @@
 /* You should have received a copy of the GNU General Public License     */
 /* along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 
+#include <immintrin.h>
+
 typedef struct {
 	
 	int type;
 	
 	unsigned int ntaps;
-	int16_t *itaps;
-	int16_t *qtaps;
-	
-	unsigned int owin;
-	int16_t *win;
+
+	union {
+		/* Non-vector mode (type != 4) */
+		struct {
+			int16_t *itaps;
+			int16_t *qtaps;
+			
+			unsigned int owin;
+			int16_t *win;
+		};
+
+		/* AVX-512 mode (type == 4, ntaps <= 64) */
+		struct {
+			__m512i itaps0;
+			__m512i itaps1;
+
+			__m512i qtaps0;
+			__m512i qtaps1;
+
+			__m512i win0;
+			__m512i win1;
+
+			__m512i rotateidx;
+		} avx;
+	};
 	
 } fir_int16_t;
 
@@ -43,4 +65,5 @@ extern size_t fir_int16_complex_process(fir_int16_t *s, int16_t *out, const int1
 
 extern int fir_int16_scomplex_init(fir_int16_t *s, const int16_t *taps, unsigned int ntaps);
 extern size_t fir_int16_scomplex_process(fir_int16_t *s, int16_t *out, const int16_t *in, size_t samples);
+extern size_t fir_int16_scomplex_process_avx512(fir_int16_t *s, int16_t *out, const int16_t *in, size_t samples);
 

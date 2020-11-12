@@ -21,8 +21,6 @@
 #include <math.h>
 #include "fir.h"
 
-
-
 /* Some of the filter design functions contained within here where taken
    from or are based on those within gnuradio's gr-filter/lib/firdes.cc */
 
@@ -188,10 +186,18 @@ size_t fir_int16_process(fir_int16_t *s, int16_t *out, const int16_t *in, size_t
 	int y;
 	int p;
 	
-	if(s->type == 0) return(0);
-	else if(s->type == 2) return(fir_int16_complex_process(s, out, in, samples));
-	else if(s->type == 3) return(fir_int16_scomplex_process(s, out, in, samples));
-	
+	switch(s->type)
+	{
+		case 0:
+			return(0);
+		case 2:
+			return(fir_int16_complex_process(s, out, in, samples));
+		case 3:
+			return(fir_int16_scomplex_process(s, out, in, samples));
+		case 4:
+			return(fir_int16_scomplex_process_avx512(s, out, in, samples));
+	}
+
 	for(x = 0; x < samples; x++)
 	{
 		/* Append the next input sample to the round buffer */
@@ -309,20 +315,56 @@ int fir_int16_scomplex_init(fir_int16_t *s, const int16_t *taps, unsigned int nt
 {
 	int i;
 	
-	s->type  = 3;
-	s->ntaps = ntaps;
-	s->itaps = calloc(s->ntaps, sizeof(int16_t));
-	s->qtaps = calloc(s->ntaps, sizeof(int16_t));
-	
-	/* Copy the taps in the order and format they are to be used */
-	for(i = 0; i < ntaps; i++)
+	if(ntaps <= 64) // TODO: cpu type detection for avx512
 	{
-		s->itaps[i] = taps[i * 2 + 0];
-		s->qtaps[i] = taps[i * 2 + 1];
+		uint16_t tmp[128];
+
+		s->type = 4;
+
+		s->avx.win0 = _mm512_setzero_epi32();
+		s->avx.win1 = _mm512_setzero_epi32();
+
+		memset(tmp, 0, 128 * sizeof(uint16_t));
+
+		/* Copy the taps in the order and format they are to be used */
+		for(i = 0; i < ntaps; i++)
+		{
+			tmp[i] = taps[i * 2 + 0];
+			tmp[i + 64] = taps[i * 2 + 1];
+		}
+
+		s->avx.itaps0 = _mm512_loadu_epi16(tmp);
+		s->avx.itaps1 = _mm512_loadu_epi16(tmp + 32);
+
+		s->avx.qtaps0 = _mm512_loadu_epi16(tmp + 96);
+		s->avx.qtaps1 = _mm512_loadu_epi16(tmp + 128);
+
+		tmp[0] = 32;
+		for(i = 1; i < 32; i++)
+		{
+			tmp[i] = i - 1;
+		}
+
+		s->avx.rotateidx = _mm512_loadu_epi16(tmp);
 	}
-	
-	s->win = calloc(s->ntaps * 2, sizeof(int16_t));
-	s->owin = 0;
+	else
+	{
+		s->type = 3;
+
+		s->ntaps = ntaps;
+		s->itaps = calloc(s->ntaps, sizeof(int16_t));
+		s->qtaps = calloc(s->ntaps, sizeof(int16_t));
+		
+		/* Copy the taps in the order and format they are to be used */
+		for(i = 0; i < ntaps; i++)
+		{
+			s->itaps[i] = taps[i * 2 + 0];
+			s->qtaps[i] = taps[i * 2 + 1];
+		}
+		
+		s->win = calloc(s->ntaps * 2, sizeof(int16_t));
+		s->owin = 0;
+	}
 	
 	return(0);
 }
@@ -333,7 +375,7 @@ size_t fir_int16_scomplex_process(fir_int16_t *s, int16_t *out, const int16_t *i
 	int x;
 	int y;
 	int p;
-	
+
 	for(x = 0; x < samples; x++)
 	{
 		/* Append the next input sample to the sliding window */
@@ -358,3 +400,32 @@ size_t fir_int16_scomplex_process(fir_int16_t *s, int16_t *out, const int16_t *i
 	return(samples);
 }
 
+size_t fir_int16_scomplex_process_avx512(fir_int16_t *s, int16_t *out, const int16_t *in, size_t samples)
+{
+	int32_t ai, aq;
+	int x;
+	__m512i insample;
+	
+	for(x = 0; x < samples; x++)
+	{
+		/* Append the next input sample to the sliding window */
+		insample = _mm512_set1_epi16(in[0]);
+		s->avx.win1 = _mm512_permutex2var_epi16(s->avx.win1, s->avx.rotateidx, s->avx.win0);
+		s->avx.win0 = _mm512_permutex2var_epi16(s->avx.win0, s->avx.rotateidx, insample);
+
+		// _mm256_madd_epi16()
+
+		ai = _mm512_reduce_add_epi32(_mm512_madd_epi16(s->avx.win0, s->avx.itaps0));
+		ai += _mm512_reduce_add_epi32(_mm512_madd_epi16(s->avx.win1, s->avx.itaps1));
+
+		aq = _mm512_reduce_add_epi32(_mm512_madd_epi16(s->avx.win0, s->avx.qtaps0));
+		aq += _mm512_reduce_add_epi32(_mm512_madd_epi16(s->avx.win1, s->avx.qtaps1));
+
+		out[0] = aq >> 15;
+		out[1] = ai >> 15;
+		out += 2;
+		in += 2;
+	}
+	
+	return(samples);
+}
