@@ -132,7 +132,9 @@ int rf_soapysdr_open(hacktv_t *s, const char *device, unsigned int frequency_hz,
 		return(HACKTV_ERROR);
 	}
 	
-	if(SoapySDRDevice_setupStream(rf->d, &rf->s, SOAPY_SDR_TX, SOAPY_SDR_CS16, NULL, 0, NULL) != 0)
+	rf->s = SoapySDRDevice_setupStream(rf->d, SOAPY_SDR_TX, SOAPY_SDR_CS16, NULL, 0, NULL);
+
+	if(rf->s == NULL)
 	{
 		fprintf(stderr, "SoapySDRDevice_setupStream() failed: %s\n", SoapySDRDevice_lastError());
 		free(rf);
